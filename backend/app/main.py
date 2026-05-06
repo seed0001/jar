@@ -14,13 +14,18 @@ from fastapi import Body, FastAPI, File, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, JSONResponse
 
-from app.config import TIER_MODELS_PATH, EDGE_TTS_DEFAULT_VOICE
+from app.config import (
+    TIER_MODELS_PATH,
+    EDGE_TTS_DEFAULT_VOICE,
+    JAR_INJECT_WINSTATE_EACH_CHAT,
+)
 from app.core import edge_tts as edge_tts_module
 from app.core import stt_whisper as stt_whisper_module
 from app.core.llm import llm
 from app.core.jar_brain import build_system_prompt, format_jar_greeting, get_hardware_state
 from app.core.tier_select import auto_select_tier
 from app.core.local_tools import allowed_read_roots
+from app.core.system_shell import system_shell_enabled
 from app.core.tool_router import plan_tools, execute_tool_plan
 from app.core.web_search import web_search_available
 from app.memory.episodic import (
@@ -58,9 +63,10 @@ async def startup():
     tm = llm.tier_models
     edge_ok = edge_tts_module.EDGE_TTS_AVAILABLE
     stt_ok = stt_whisper_module.stt_import_ok()
+    shell_ok = system_shell_enabled()
     logger.info(
         f"✧ J.A.R. v6 online → tiers: 1={tm.get(1)} | 2={tm.get(2)} | 3={tm.get(3)} "
-        f"| edge-tts={edge_ok} | stt={stt_ok}"
+        f"| edge-tts={edge_ok} | stt={stt_ok} | system_shell={shell_ok}"
     )
 
 
@@ -78,6 +84,8 @@ async def health():
         "web_search": web_search_available(),
         "jar_file_read_roots": len(allowed_read_roots()),
         "stt": stt_whisper_module.stt_import_ok(),
+        "jar_system_shell": system_shell_enabled(),
+        "jar_inject_winstate_each_chat": JAR_INJECT_WINSTATE_EACH_CHAT,
         **hw,
         "timestamp": datetime.utcnow().isoformat(),
     }
@@ -178,6 +186,8 @@ async def chat(payload: dict = Body(...)):
                 tools_meta.get("files_read"),
                 tools_meta.get("processes"),
                 tools_meta.get("sysinfo"),
+                tools_meta.get("winstate"),
+                tools_meta.get("shell_ran", 0) > 0,
             ]
         ):
             yield f"data: {json.dumps({'type': 'tools', **tools_meta})}\n\n"

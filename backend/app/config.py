@@ -28,6 +28,17 @@ JAR_TOOL_HEURISTICS = os.getenv("JAR_TOOL_HEURISTICS", "1").strip().lower() in (
     "",
 )
 
+# System shell (Windows PowerShell) — same class of access as seed0001/claude machine.run_command.
+# OFF by default. When enabled, [[JAR_RUN: ...]] in chat runs arbitrary PowerShell (timeout capped).
+JAR_SYSTEM_SHELL_ENABLED = os.getenv("JAR_SYSTEM_SHELL", "0").strip().lower() in ("1", "true", "yes")
+JAR_SYSTEM_SHELL_TIMEOUT = int(os.getenv("JAR_SYSTEM_SHELL_TIMEOUT", "300"))
+# When true, every /chat turn prepends a full WMI-style machine snapshot (token-heavy).
+JAR_INJECT_WINSTATE_EACH_CHAT = os.getenv("JAR_INJECT_WINSTATE_EACH_CHAT", "0").strip().lower() in (
+    "1",
+    "true",
+    "yes",
+)
+
 # ── LLM ────────────────────────────────────────────────────────────────────────
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 

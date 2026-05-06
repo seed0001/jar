@@ -9,13 +9,19 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Set, Tuple
 
-from app.config import JAR_TOOL_HEURISTICS, REPO_ROOT
+from app.config import (
+    JAR_INJECT_WINSTATE_EACH_CHAT,
+    JAR_TOOL_HEURISTICS,
+    REPO_ROOT,
+)
 from app.core.local_tools import (
     build_extended_system_info,
     build_process_snapshot,
     read_file_for_context,
 )
+from app.core.system_shell import format_command_result, run_powershell
 from app.core.web_search import multi_hop_search, web_search_available
+from app.core.windows_state import get_full_windows_state
 
 logger = logging.getLogger("JAR.ToolRouter")
 
@@ -23,6 +29,8 @@ RE_TAG_WEB = re.compile(r"\[\[JAR_WEB:\s*(.+?)\s*\]\]", re.I | re.DOTALL)
 RE_TAG_FILE = re.compile(r"\[\[JAR_READ_FILE:\s*(.+?)\s*\]\]", re.I | re.DOTALL)
 RE_TAG_SYSINFO = re.compile(r"\[\[JAR_SYSINFO\]\]", re.I)
 RE_TAG_PROCESSES = re.compile(r"\[\[JAR_PROCESSES\]\]", re.I)
+RE_TAG_WINSTATE = re.compile(r"\[\[JAR_WINSTATE\]\]", re.I)
+RE_TAG_RUN = re.compile(r"\[\[JAR_RUN:\s*(.+?)\s*\]\]", re.I | re.DOTALL)
 
 RE_HEUR_FILE = re.compile(
     r"\b(?:read|show|open|display|cat)\s+(?:the\s+)?(?:file\s+)?[`'\"]?([a-zA-Z]:\\[^\n`'\"<>|*?]{2,260})",
@@ -42,6 +50,8 @@ class ToolPlan:
     read_paths: List[str] = field(default_factory=list)
     want_processes: bool = False
     want_sysinfo: bool = False
+    want_winstall: bool = False
+    powershell_commands: List[str] = field(default_factory=list)
 
 
 def _dedupe_preserve(seq: List[str]) -> List[str]:
@@ -75,6 +85,17 @@ def plan_tools(user_query: str) -> ToolPlan:
         plan.want_processes = True
     if RE_TAG_PROCESSES.search(q):
         plan.want_processes = True
+
+    if RE_TAG_WINSTATE.search(q):
+        plan.want_winstall = True
+
+    for m in RE_TAG_RUN.finditer(q):
+        inner = (m.group(1) or "").strip()
+        if inner:
+            plan.powershell_commands.append(inner[:12000])
+
+    if JAR_INJECT_WINSTATE_EACH_CHAT:
+        plan.want_winstall = True
 
     if JAR_TOOL_HEURISTICS:
         low = q.lower()
@@ -140,6 +161,7 @@ def plan_tools(user_query: str) -> ToolPlan:
 
     plan.web_queries = _dedupe_preserve(plan.web_queries)[:2]
     plan.read_paths = _dedupe_preserve(plan.read_paths)[:6]
+    plan.powershell_commands = _dedupe_preserve(plan.powershell_commands)[:3]
 
     return plan
 
@@ -156,6 +178,8 @@ async def execute_tool_plan(plan: ToolPlan) -> Tuple[List[str], Dict[str, Any]]:
         "files_read": [],
         "processes": False,
         "sysinfo": False,
+        "winstate": False,
+        "shell_ran": 0,
     }
 
     for wq in plan.web_queries:
@@ -185,6 +209,14 @@ async def execute_tool_plan(plan: ToolPlan) -> Tuple[List[str], Dict[str, Any]]:
         if "### File contents:" in text or "### Directory listing:" in text:
             meta["files_read"].append(path)
 
+    if plan.want_winstall:
+        try:
+            blocks.append(get_full_windows_state())
+            meta["winstate"] = True
+        except Exception as e:
+            logger.warning("Windows state gather failed: %s", e)
+            blocks.append(f"### Machine state error\n{e}\n")
+
     if plan.want_sysinfo:
         try:
             blocks.append(build_extended_system_info())
@@ -198,5 +230,10 @@ async def execute_tool_plan(plan: ToolPlan) -> Tuple[List[str], Dict[str, Any]]:
             meta["processes"] = True
         except Exception as e:
             blocks.append(f"### Process list error\n{e}\n")
+
+    for ps_cmd in plan.powershell_commands:
+        result = run_powershell(ps_cmd)
+        blocks.append(format_command_result(result, label="PowerShell (JAR_RUN)"))
+        meta["shell_ran"] += 1
 
     return blocks, meta
