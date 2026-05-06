@@ -33,6 +33,8 @@ export default function App() {
   const [health,         setHealth]        = useState(null);
   const [tierModels,     setTierModels]     = useState({ 1: '', 2: '', 3: '' });
   const [ollamaModels,   setOllamaModels]   = useState([]);
+  const [fallbackModel, setFallbackModel] = useState('');
+  const [refusalFallbackEnabled, setRefusalFallbackEnabled] = useState(false);
   const [saveTierStatus, setSaveTierStatus] = useState('idle');
   const streamRef = useRef(null);
   const ttsAudioRef = useRef(null);
@@ -53,6 +55,8 @@ export default function App() {
           3: String(tm['3'] ?? tm[3] ?? ''),
         });
         setOllamaModels(Array.isArray(data.ollama_models) ? data.ollama_models : []);
+        setFallbackModel(String(data.fallback_model ?? '').trim());
+        setRefusalFallbackEnabled(!!data.refusal_fallback_enabled);
       })
       .catch(() => {});
   }, []);
@@ -185,6 +189,8 @@ export default function App() {
             2: tierModels[2]?.trim(),
             3: tierModels[3]?.trim(),
           },
+          fallback_model: fallbackModel.trim(),
+          refusal_fallback_enabled: refusalFallbackEnabled,
         }),
       });
       if (!r.ok) {
@@ -198,6 +204,8 @@ export default function App() {
         2: String(tm['2'] ?? ''),
         3: String(tm['3'] ?? ''),
       });
+      setFallbackModel(String(data.fallback_model ?? '').trim());
+      setRefusalFallbackEnabled(!!data.refusal_fallback_enabled);
       setSaveTierStatus('idle');
       try {
         const hr = await fetch(`${API}/health`);
@@ -208,12 +216,14 @@ export default function App() {
         if (tr.ok) {
           const td = await tr.json();
           setOllamaModels(Array.isArray(td.ollama_models) ? td.ollama_models : []);
+          setFallbackModel(String(td.fallback_model ?? '').trim());
+          setRefusalFallbackEnabled(!!td.refusal_fallback_enabled);
         }
       } catch { /* ignore */ }
     } catch {
       setSaveTierStatus('error');
     }
-  }, [tierModels]);
+  }, [tierModels, fallbackModel, refusalFallbackEnabled]);
 
   const sendFeedback = useCallback(async (msgId, query, response, rating) => {
     setMessages(prev => prev.map(m => m.id === msgId ? { ...m, feedback: rating } : m));
@@ -374,6 +384,10 @@ export default function App() {
             ollamaModels={ollamaModels}
             onSave={saveTierModelsToServer}
             saveStatus={saveTierStatus}
+            fallbackModel={fallbackModel}
+            onFallbackModelChange={setFallbackModel}
+            refusalFallbackEnabled={refusalFallbackEnabled}
+            onRefusalFallbackEnabledChange={setRefusalFallbackEnabled}
           />
 
           <VoiceSelector edgeTtsOk={health?.edge_tts === true} />

@@ -18,6 +18,8 @@ from app.config import (
     TIER_MODELS_PATH,
     EDGE_TTS_DEFAULT_VOICE,
     JAR_INJECT_WINSTATE_EACH_CHAT,
+    get_routing_from_disk,
+    load_tier_models_document,
 )
 from app.core import edge_tts as edge_tts_module
 from app.core import stt_whisper as stt_whisper_module
@@ -26,6 +28,7 @@ from app.core.jar_brain import build_system_prompt, format_jar_greeting, get_har
 from app.core.tier_select import auto_select_tier
 from app.core.local_tools import allowed_read_roots
 from app.core.system_shell import system_shell_enabled
+from app.core.router import stream_chat_with_refusal_routing
 from app.core.tool_router import plan_tools, execute_tool_plan
 from app.core.web_search import web_search_available
 from app.memory.episodic import (
@@ -74,6 +77,7 @@ async def startup():
 async def health():
     hw = get_hardware_state()
     tm = llm.tier_models
+    r_fb, r_en = get_routing_from_disk()
     return {
         "status": "online",
         "ollama": llm.is_available,
@@ -86,6 +90,8 @@ async def health():
         "stt": stt_whisper_module.stt_import_ok(),
         "jar_system_shell": system_shell_enabled(),
         "jar_inject_winstate_each_chat": JAR_INJECT_WINSTATE_EACH_CHAT,
+        "jar_refusal_fallback_enabled": r_en,
+        "jar_fallback_model": r_fb or "",
         **hw,
         "timestamp": datetime.utcnow().isoformat(),
     }
@@ -96,9 +102,12 @@ async def get_models_tiers():
     """Ollama tag list + tier→model map (for configuring which models back each tier)."""
     llm.check_availability()
     tm = llm.tier_models
+    fb, rfb = get_routing_from_disk()
     return {
         "tier_models": {str(k): tm[k] for k in (1, 2, 3)},
         "ollama_models": llm.available_models,
+        "fallback_model": fb or "",
+        "refusal_fallback_enabled": rfb,
     }
 
 
@@ -119,13 +128,30 @@ async def post_models_tiers(payload: dict = Body(...)):
             )
         new_t[k] = str(v).strip()
 
+    doc = load_tier_models_document()
+    doc.update({"1": new_t[1], "2": new_t[2], "3": new_t[3]})
+    if "fallback_model" in payload:
+        doc["fallback_model"] = str(payload.get("fallback_model") or "").strip()
+    if "refusal_fallback_enabled" in payload:
+        v = payload.get("refusal_fallback_enabled")
+        if isinstance(v, bool):
+            doc["refusal_fallback_enabled"] = v
+        else:
+            doc["refusal_fallback_enabled"] = str(v).strip().lower() in ("1", "true", "yes")
+
     TIER_MODELS_PATH.write_text(
-        json.dumps({"1": new_t[1], "2": new_t[2], "3": new_t[3]}, indent=2, ensure_ascii=False),
+        json.dumps(doc, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     llm.reload_tier_models()
     llm.check_availability()
-    return {"status": "saved", "tier_models": {str(k): new_t[k] for k in new_t}}
+    fb, rfb = get_routing_from_disk()
+    return {
+        "status": "saved",
+        "tier_models": {str(k): new_t[k] for k in new_t},
+        "fallback_model": fb or "",
+        "refusal_fallback_enabled": rfb,
+    }
 
 
 @app.post("/chat")
@@ -236,13 +262,16 @@ async def chat(payload: dict = Body(...)):
         # ── Stream response ───────────────────────────────────────────────────
         yield f"data: {json.dumps({'type': 'state', 'state': 'responding'})}\n\n"
         full_response = ""
+        routing_meta: dict = {}
 
         try:
-            async for token in llm.stream_chat(
+            async for token in stream_chat_with_refusal_routing(
+                llm,
                 messages,
                 tier=tier,
                 max_tokens=2048,
                 temperature=0.7,
+                routing_meta=routing_meta,
             ):
                 full_response += token
                 yield f"data: {json.dumps({'type': 'token', 'token': token})}\n\n"
@@ -266,7 +295,7 @@ async def chat(payload: dict = Body(...)):
         asyncio.create_task(maybe_compress_session(session_id))
         asyncio.create_task(compress_old_messages(session_id))
 
-        used_model = llm.get_model_for_tier(tier)
+        used_model = routing_meta.get("model_used") or llm.get_model_for_tier(tier)
         yield f"data: {json.dumps({'type': 'done', 'session_id': session_id, 'model_used': used_model, 'tier': tier})}\n\n"
 
     return StreamingResponse(

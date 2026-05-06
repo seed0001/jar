@@ -12,20 +12,20 @@ function sortedModels(ollamaModels) {
   return [...ollamaModels].sort((a, b) => a.localeCompare(b, undefined, { sensitivity: 'base' }));
 }
 
-function tierSelectOptions(tier, tierModels, ollamaModels) {
+function modelPickOptions(currentValue, ollamaModels, orphanKeyPrefix) {
   const models = sortedModels(ollamaModels);
-  const cur = String(tierModels[tier] ?? '').trim();
+  const cur = String(currentValue ?? '').trim();
   const options = [];
 
   if (cur && !models.includes(cur)) {
     options.push({
       value: cur,
       label: `${cur} (not in current Ollama list)`,
-      key: `orphan-${tier}-${cur}`,
+      key: `${orphanKeyPrefix}-orphan-${cur}`,
     });
   }
   for (const name of models) {
-    options.push({ value: name, label: name, key: name });
+    options.push({ value: name, label: name, key: `${orphanKeyPrefix}-${name}` });
   }
   return { options, current: cur, hasModels: models.length > 0 };
 }
@@ -36,6 +36,10 @@ export default function ModelSelector({
   ollamaModels,
   onSave,
   saveStatus,
+  fallbackModel,
+  onFallbackModelChange,
+  refusalFallbackEnabled,
+  onRefusalFallbackEnabledChange,
 }) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef(null);
@@ -43,6 +47,11 @@ export default function ModelSelector({
   const modelCount = useMemo(
     () => (Array.isArray(ollamaModels) ? ollamaModels.length : 0),
     [ollamaModels],
+  );
+
+  const fbOpts = useMemo(
+    () => modelPickOptions(fallbackModel, ollamaModels, 'fb'),
+    [fallbackModel, ollamaModels],
   );
 
   useEffect(() => {
@@ -59,7 +68,7 @@ export default function ModelSelector({
         type="button"
         className="model-selector-btn"
         onClick={(e) => { e.stopPropagation(); setOpen((o) => !o); }}
-        title="Choose which downloaded Ollama model backs each auto tier"
+        title="Choose Ollama models per tier and refusal fallback"
         id="model-config-btn"
       >
         <Cpu size={15} />
@@ -78,7 +87,11 @@ export default function ModelSelector({
             ). Pick one per tier, then save.
           </p>
           {TIER_META.map(({ tier, label, sub }) => {
-            const { options, current, hasModels } = tierSelectOptions(tier, tierModels, ollamaModels);
+            const { options, current, hasModels } = modelPickOptions(
+              tierModels[tier],
+              ollamaModels,
+              `t${tier}`,
+            );
             const showPlaceholder = hasModels && !current;
             return (
               <label key={tier} className="tier-model-field">
@@ -112,6 +125,45 @@ export default function ModelSelector({
               </label>
             );
           })}
+
+          <div className="model-dropdown-title tier-fallback-title">Refusal fallback</div>
+          <p className="tier-model-lede">
+            If the tier model refuses or blocks, JAR automatically retries the same prompt on the fallback model.
+            No confirmation — only the final answer is streamed.
+          </p>
+          <label className="tier-model-field tier-fallback-toggle">
+            <span className="tier-model-label">
+              Enable automatic fallback
+              <small>Requires a fallback model below (must differ from the tier model).</small>
+            </span>
+            <input
+              type="checkbox"
+              checked={!!refusalFallbackEnabled}
+              onChange={(e) => onRefusalFallbackEnabledChange(e.target.checked)}
+              id="refusal-fallback-enabled"
+            />
+          </label>
+          <label className="tier-model-field">
+            <span className="tier-model-label">
+              Fallback model
+              <small>Less restrictive tag (e.g. uncensored). Leave unset to disable rerouting.</small>
+            </span>
+            <select
+              className="tier-model-input tier-model-select"
+              value={fbOpts.current}
+              onChange={(e) => onFallbackModelChange(e.target.value)}
+              disabled={!fbOpts.hasModels && !fbOpts.current}
+              id="fallback-model-select"
+            >
+              <option value="">— None (no reroute) —</option>
+              {fbOpts.options.map(({ value, label: optLabel, key }) => (
+                <option key={key} value={value}>
+                  {optLabel}
+                </option>
+              ))}
+            </select>
+          </label>
+
           <button
             type="button"
             className="tier-model-save"
@@ -125,7 +177,10 @@ export default function ModelSelector({
           {saveStatus === 'error' && (
             <p className="tier-model-save-err">Save failed — check backend logs.</p>
           )}
-          <p className="tier-model-hint">Writes <code>jar_tier_models.json</code> in the project root (overrides .env for tiers).</p>
+          <p className="tier-model-hint">
+            Writes <code>jar_tier_models.json</code> (tiers + <code>fallback_model</code> +{' '}
+            <code>refusal_fallback_enabled</code>).
+          </p>
         </div>
       )}
     </div>

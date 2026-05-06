@@ -6,7 +6,7 @@ Vision removed; Edge TTS + optional local Whisper STT are wired from the API.
 import json
 import os
 from pathlib import Path
-from typing import Dict
+from typing import Any, Dict, Optional, Tuple
 
 from dotenv import load_dotenv
 
@@ -44,6 +44,50 @@ OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
 
 _DEFAULT_MODEL = os.getenv("OLLAMA_DEFAULT_MODEL", "llama2-uncensored").strip() or "llama2-uncensored"
 TIER_MODELS_PATH = _root / "jar_tier_models.json"
+
+# Refusal → fallback routing (see app.core.router)
+ROUTING_REFUSAL_THRESHOLD = float(os.getenv("JAR_ROUTING_REFUSAL_THRESHOLD", "0.72"))
+_refusal_patterns = os.getenv("JAR_REFUSAL_EXTRA_PATTERNS_PATH", "").strip()
+ROUTING_REFUSAL_EXTRA_PATTERNS_PATH: Optional[Path] = (
+    Path(_refusal_patterns) if _refusal_patterns else None
+)
+
+
+def load_tier_models_document() -> Dict[str, Any]:
+    """Full `jar_tier_models.json` object (tiers + optional routing keys)."""
+    if not TIER_MODELS_PATH.exists():
+        return {}
+    try:
+        data = json.loads(TIER_MODELS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, OSError, TypeError):
+        return {}
+
+
+def get_routing_from_disk() -> Tuple[str, bool]:
+    """
+    Returns (fallback_model_tag, refusal_fallback_enabled).
+    File keys: fallback_model (or legacy fallback), refusal_fallback_enabled.
+    """
+    doc = load_tier_models_document()
+    fb = str(doc.get("fallback_model") or doc.get("fallback") or "").strip()
+    if not fb:
+        fb = os.getenv("JAR_ROUTING_FALLBACK_MODEL", "").strip()
+    raw_en = doc.get("refusal_fallback_enabled")
+    if raw_en is None:
+        env = os.getenv("JAR_ROUTING_REFUSAL_FALLBACK_ENABLED", "").strip().lower()
+        if env in ("1", "true", "yes"):
+            enabled = True
+        elif env in ("0", "false", "no"):
+            enabled = False
+        else:
+            enabled = False
+    else:
+        if isinstance(raw_en, bool):
+            enabled = raw_en
+        else:
+            enabled = str(raw_en).strip().lower() in ("1", "true", "yes")
+    return fb, enabled
 
 
 def load_tier_models_config() -> Dict[int, str]:

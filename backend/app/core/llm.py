@@ -98,37 +98,31 @@ class OllamaProvider:
             logger.error(f"LLM chat error: {e}")
             raise
 
-    # ── async streaming chat — primary path for /chat endpoint ────────────────
-    async def stream_chat(
+    async def stream_chat_with_model(
         self,
         messages: List[Dict],
-        tier: int = 2,
+        model: str,
+        *,
         max_tokens: int = 2048,
         temperature: float = 0.7,
     ) -> AsyncGenerator[str, None]:
-        model = self.get_model_for_tier(tier)
-        logger.info(f"LLM stream_chat started for model {model} (tier {tier})")
+        """Stream chat using an explicit Ollama model tag (provider-agnostic payload shape)."""
+        logger.info("LLM stream_chat_with_model started for model %s", model)
         options = {**WIN_OPTIONS, "num_predict": max_tokens, "temperature": temperature}
-
         payload = {
             "model": model,
             "messages": messages,
             "stream": True,
             "options": options,
         }
-        logger.info(f"Streaming → {model} (ctx={WIN_OPTIONS['num_ctx']})")
-
         try:
             session = await self.get_session()
-            logger.info(f"Connecting to Ollama at {self.base_url}/api/chat...")
             async with session.post(
                 f"{self.base_url}/api/chat",
                 json=payload,
                 timeout=aiohttp.ClientTimeout(total=300),
             ) as resp:
-                logger.info(f"Ollama response status: {resp.status}")
                 resp.raise_for_status()
-                logger.info("Starting to iterate over Ollama stream content...")
                 async for line in resp.content:
                     line = line.decode("utf-8").strip()
                     if not line:
@@ -139,15 +133,27 @@ class OllamaProvider:
                         if token:
                             yield token
                         if data.get("done"):
-                            logger.info("Ollama stream marked as 'done'")
                             break
                     except json.JSONDecodeError:
-                        logger.warning(f"Failed to decode line: {line}")
+                        logger.warning("Failed to decode line: %s", line[:120])
                         continue
-            logger.info("Finished iterating over Ollama stream")
         except Exception as e:
-            logger.error(f"Stream error ({model}): {e}")
+            logger.error("Stream error (%s): %s", model, e)
             yield f"\n\n*I do beg your pardon, Sir — the connection faltered. ({e})*"
+
+    # ── async streaming chat — primary path for /chat endpoint ────────────────
+    async def stream_chat(
+        self,
+        messages: List[Dict],
+        tier: int = 2,
+        max_tokens: int = 2048,
+        temperature: float = 0.7,
+    ) -> AsyncGenerator[str, None]:
+        model = self.get_model_for_tier(tier)
+        async for token in self.stream_chat_with_model(
+            messages, model, max_tokens=max_tokens, temperature=temperature
+        ):
+            yield token
 
 
 llm = OllamaProvider()

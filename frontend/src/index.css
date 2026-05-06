@@ -130,6 +130,10 @@ html,body,#root{height:100%;font-family:'Inter',-apple-system,sans-serif;backgro
 }
 .model-selector-btn .chev-open{transform:rotate(180deg);transition:transform var(--t);}
 .model-dropdown-wide{min-width:min(360px,92vw);padding:12px;}
+.model-dropdown-title.tier-fallback-title{margin-top:14px;}
+.tier-fallback-toggle{display:flex;flex-direction:row;align-items:flex-start;gap:10px;flex-wrap:wrap;}
+.tier-fallback-toggle input[type=checkbox]{margin-top:4px;width:16px;height:16px;cursor:pointer;flex-shrink:0;}
+.tier-fallback-toggle .tier-model-label{flex:1;min-width:0;}
 
 .voice-selector-wrap{position:relative;display:flex;align-items:center;}
 .voice-selector-off{gap:6px;font-size:11px;color:var(--gem-text-faint);padding:4px 8px;align-items:center;}
