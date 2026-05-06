@@ -1,0 +1,41 @@
+# Secrets & local env
+.env
+.env.*
+!.env.example
+
+# Local data / SQLite
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Logs
+*.log
+
+# Node (frontend)
+node_modules/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# User-specific profile in tree (optional; remove line to version it)
+BORISLAV_PROFILE.json
+
+# Scratch
+*New Text Document*
